@@ -1,0 +1,8 @@
+{
+    "hostname": "your-server-ip-or-hostname",
+    "username": "your-username",
+    "password": "your-password-or-leave-empty-for-key-auth",
+    "key_filename": "/path/to/your/private/key",
+    "port": 22,
+    "commands_file": "commands.txt"
+}

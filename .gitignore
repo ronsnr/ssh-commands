@@ -1,0 +1,36 @@
+# SSH Commands .gitignore
+
+# Configuration files with sensitive information
+config.json
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual environments
+venv/
+env/
+.env
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Test files
+test_commands.txt
+
+# Log files
+*.log
+
+# SSH keys
+*.pem
+*.ppk
+id_*
+
+# OS files
+.DS_Store
+Thumbs.db

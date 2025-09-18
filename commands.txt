@@ -1,0 +1,35 @@
+# Sample commands to execute on remote server
+# Lines starting with # are comments and will be ignored
+# Empty lines are also ignored
+
+# System information commands
+whoami
+pwd
+hostname
+uname -a
+
+# Directory and file operations
+ls -la
+df -h
+free -m
+
+# Process information
+ps aux | head -10
+top -bn1 | head -20
+
+# Network information
+ip addr show
+netstat -tuln | head -10
+
+# System uptime and load
+uptime
+w
+
+# Check for specific services (example)
+systemctl status ssh
+systemctl status nginx
+
+# Custom commands (uncomment as needed)
+# docker ps
+# kubectl get pods
+# tail -f /var/log/syslog | head -20
