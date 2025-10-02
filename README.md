@@ -39,9 +39,9 @@ python ssh_executor.py <hostname> <username> <commands_file> [password] [key_fil
 
 **Examples:**
 
-Using password authentication:
+Using password authentication (password will be prompted):
 ```bash
-python ssh_executor.py 192.168.1.100 myuser commands.txt mypassword
+python ssh_executor.py 192.168.1.100 myuser commands.txt
 ```
 
 Using SSH key authentication:
@@ -51,7 +51,7 @@ python ssh_executor.py 192.168.1.100 myuser commands.txt '' ~/.ssh/id_rsa
 
 Using custom port:
 ```bash
-python ssh_executor.py 192.168.1.100 myuser commands.txt mypassword '' 2222
+python ssh_executor.py 192.168.1.100 myuser commands.txt '' ~/.ssh/id_rsa 2222
 ```
 
 ### Method 2: Configuration File Interface
@@ -106,7 +106,7 @@ free -m
 ## Authentication Methods
 
 ### Password Authentication
-Set the `password` field in config.json or pass it as a command line argument.
+The script will prompt for the password during execution.
 
 ### SSH Key Authentication
 Set the `key_filename` field in config.json to point to your private key file, or pass it as a command line argument. Leave the password field empty when using key authentication.

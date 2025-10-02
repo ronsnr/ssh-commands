@@ -11,6 +11,7 @@ import logging
 from typing import List, Optional
 import paramiko
 from paramiko.ssh_exception import SSHException, AuthenticationException, NoValidConnectionsError
+import getpass
 
 
 class SSHCommandExecutor:
@@ -51,9 +52,17 @@ class SSHCommandExecutor:
         """
         try:
             self.client = paramiko.SSHClient()
-            self.client.set_missing_host_key_policy(paramiko.AutoAddHostKey())
+            self.client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
             
             self.logger.info(f"Connecting to {self.hostname}:{self.port} as {self.username}")
+            self.logger.debug(f"Password provided: {'Yes' if self.password else 'No'}")
+            self.logger.debug(f"Key file provided: {self.key_filename if self.key_filename else 'No'}")
+            
+            if not self.password and not self.key_filename:
+                self.password = getpass.getpass(prompt="Enter your SSH password: ")
+                if not self.password:
+                    self.logger.error("No authentication method provided (password or key)")
+                    return False
             
             if self.key_filename and os.path.exists(self.key_filename):
                 self.client.connect(
