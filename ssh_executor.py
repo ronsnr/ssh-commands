@@ -46,20 +46,37 @@ class SSHCommandExecutor:
         )
         self.logger = logging.getLogger(__name__)
     
-    def connect(self) -> bool:
+    def connect(self, legacy_crypto: bool = False) -> bool:
         """
         Establish SSH connection to the remote server.
         
+        Args:
+            legacy_crypto: If True, enable legacy crypto algorithms for compatibility.
+            
         Returns:
             True if connection successful, False otherwise
         """
         try:
-            self.client = paramiko.SSHClient()
-            self.client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-            
             self.logger.info(f"Connecting to {self.hostname}:{self.port} as {self.username}")
             self.logger.debug(f"Password provided: {'Yes' if self.password else 'No'}")
             self.logger.debug(f"Key file provided: {self.key_filename if self.key_filename else 'No'}")
+
+            connect_kwargs = {
+                "hostname": self.hostname,
+                "port": self.port,
+                "username": self.username,
+            }
+
+            if legacy_crypto:
+                self.logger.info("Enabling legacy crypto algorithms for compatibility.")
+                connect_kwargs["disabled_algorithms"] = {
+                    "kex": ["diffie-hellman-group-exchange-sha256"],
+                    "ciphers": ["aes256-ctr", "aes192-ctr", "aes128-ctr"]
+                }
+
+            self.client = paramiko.SSHClient()
+            self.client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            
             
             if not self.password and not self.key_filename:
                 self.password = getpass.getpass(prompt="Enter your SSH password: ")
@@ -68,19 +85,11 @@ class SSHCommandExecutor:
                     return False
 
             if self.key_filename and os.path.exists(self.key_filename):
-                self.client.connect(
-                    hostname=self.hostname,
-                    port=self.port,
-                    username=self.username,
-                    key_filename=self.key_filename
-                )
+                connect_kwargs["key_filename"] = self.key_filename
+                self.client.connect(**connect_kwargs)
             elif self.password:
-                self.client.connect(
-                    hostname=self.hostname,
-                    port=self.port,
-                    username=self.username,
-                    password=self.password
-                )
+                connect_kwargs["password"] = self.password
+                self.client.connect(**connect_kwargs)
             else:
                 self.logger.error("No authentication method provided (password or key)")
                 return False
@@ -192,7 +201,7 @@ class SSHCommandExecutor:
             chunk_size = (total_commands + num_workers - 1) // num_workers # Ceiling division
             command_chunks = [commands[i:i + chunk_size] for i in range(0, total_commands, chunk_size)]
 
-            worker_func = partial(_execute_command_chunk_worker, self.hostname, self.username, self.password, self.key_filename, self.port)
+            worker_func = partial(_execute_command_chunk_worker, self.hostname, self.username, self.password, self.key_filename, self.port, legacy_crypto=self.client.get_transport().disabled_algorithms is not None)
 
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
                 # Submit each chunk of commands to a worker
@@ -252,7 +261,8 @@ class SSHCommandExecutor:
 
 def _execute_command_chunk_worker(hostname: str, username: str, password: Optional[str], 
                                   key_filename: Optional[str], port: int, 
-                                  command_chunk: List[str], worker_id: int) -> dict[str, tuple[int, str, str]]:
+                                  command_chunk: List[str], worker_id: int,
+                                  legacy_crypto: bool = False) -> dict[str, tuple[int, str, str]]:
     """
     A worker function to execute a chunk of commands over a single, persistent SSH session.
     This is designed to be called by the ThreadPoolExecutor.
@@ -270,7 +280,7 @@ def _execute_command_chunk_worker(hostname: str, username: str, password: Option
     executor.logger.setLevel(logging.WARNING)
 
     worker_logger.info(f"Starting to process {len(command_chunk)} commands.")
-    if executor.connect():
+    if executor.connect(legacy_crypto=legacy_crypto):
         try:
             for command in command_chunk:
                 results[command] = executor.execute_command(command)
@@ -295,6 +305,7 @@ def main():
     parser.add_argument("--port", type=int, default=22, help="SSH port (default: 22)")
     parser.add_argument("--parallel", action="store_true", help="Execute commands in parallel")
     parser.add_argument("--workers", type=int, help="Number of parallel workers (default: None)")
+    parser.add_argument("--legacy-crypto", action="store_true", help="Enable legacy crypto for devices like Palo Alto firewalls")
 
     args = parser.parse_args()
     
@@ -320,7 +331,7 @@ def run_execution(args: argparse.Namespace):
     try:
         # For sequential execution, we establish one persistent connection.
         # For parallel, workers manage their own connections.
-        if not args.parallel and not executor.connect():
+        if not args.parallel and not executor.connect(legacy_crypto=args.legacy_crypto):
             sys.exit(1)
 
         success = executor.execute_commands_from_file(
