@@ -7,6 +7,8 @@ A Python script that automates SSH connections and executes predefined commands 
 - Establishes SSH connections to remote servers
 - Executes commands from a configurable text file
 - Supports both password and key-based authentication
+- Supports parallel execution of commands for faster processing.
+- Includes an option to enable legacy cryptographic algorithms for compatibility with older devices like Palo Alto firewalls.
 - Provides detailed logging and error handling
 - Command-line and configuration file interfaces
 - Handles command failures gracefully
@@ -32,16 +34,30 @@ pip install -r requirements.txt
 ## Usage
 
 ### Method 1: Command Line Interface
+The script uses `argparse` for flexible command-line arguments.
 
 ```bash
-python ssh_executor.py <hostname> <username> <commands_file> [password] [key_file] [port]
+python ssh_executor.py <hostname> <username> <commands_file> [OPTIONS]
 ```
+
+**Options:**
+- `-p, --password <password>`: SSH password (will prompt if not provided and key is not used).
+- `-k, --key_file <path>`: Path to private key file.
+- `--port <port_number>`: SSH port (default: 22).
+- `--parallel`: Execute commands in parallel using a thread pool.
+- `--workers <number>`: Number of parallel workers (threads) to use. Default is based on CPU count.
+- `--legacy-crypto`: Enable legacy cryptographic algorithms for compatibility with older devices (e.g., Palo Alto firewalls).
 
 **Examples:**
 
 Using password authentication (password will be prompted):
 ```bash
 python ssh_executor.py 192.168.1.100 myuser commands.txt
+```
+
+Using SSH key authentication:
+```bash
+python ssh_executor.py 192.168.1.100 myuser commands.txt -k ~/.ssh/id_rsa
 ```
 
 Using SSH key authentication:
