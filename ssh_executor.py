@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
 SSH Command Executor
-Connects to a remote server via SSH and executes commands from a commands.txt file.
+Connects to a remote server via SSH and executes commands from a file.
 """
 
 import sys
 import os
+import argparse
 import time
 import logging
 from typing import List, Optional
@@ -13,6 +14,8 @@ import paramiko
 from paramiko.ssh_exception import SSHException, AuthenticationException, NoValidConnectionsError
 import getpass
 
+from functools import partial
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 class SSHCommandExecutor:
     """Class to handle SSH connections and command execution."""
@@ -63,7 +66,7 @@ class SSHCommandExecutor:
                 if not self.password:
                     self.logger.error("No authentication method provided (password or key)")
                     return False
-            
+
             if self.key_filename and os.path.exists(self.key_filename):
                 self.client.connect(
                     hostname=self.hostname,
@@ -161,41 +164,83 @@ class SSHCommandExecutor:
             self.logger.error(f"Error loading commands from {commands_file}: {e}")
             return []
     
-    def execute_commands_from_file(self, commands_file: str) -> bool:
+    def execute_commands_from_file(self, commands_file: str, parallel: bool = False, max_workers: Optional[int] = None) -> bool: # noqa: E501
         """
         Execute all commands from the specified file.
         
         Args:
             commands_file: Path to the commands file
+            parallel: If True, execute commands in parallel.
+            max_workers: Maximum number of threads for parallel execution.
             
         Returns:
             True if all commands executed successfully, False otherwise
         """
         commands = self.load_commands(commands_file)
         if not commands:
-            self.logger.error("No commands to execute")
             return False
         
         success_count = 0
         total_commands = len(commands)
-        
-        for i, command in enumerate(commands, 1):
-            self.logger.info(f"Executing command {i}/{total_commands}")
-            exit_code, stdout, stderr = self.execute_command(command)
+
+        if parallel:
+            self.logger.info(f"Executing {total_commands} commands in parallel (max_workers={max_workers or 'default'})...")
+            results = {}
             
-            if stdout:
-                print(f"STDOUT:\n{stdout}")
-            if stderr:
-                print(f"STDERR:\n{stderr}")
+            # Determine the number of workers and chunk the commands
+            num_workers = min(max_workers or os.cpu_count() * 2 or 1, total_commands)
+            chunk_size = (total_commands + num_workers - 1) // num_workers # Ceiling division
+            command_chunks = [commands[i:i + chunk_size] for i in range(0, total_commands, chunk_size)]
+
+            worker_func = partial(_execute_command_chunk_worker, self.hostname, self.username, self.password, self.key_filename, self.port)
+
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                # Submit each chunk of commands to a worker
+                future_to_chunk = {executor.submit(worker_func, chunk, i): chunk for i, chunk in enumerate(command_chunks, 1)}
+                
+                for future in as_completed(future_to_chunk):
+                    chunk_results = future.result()
+                    try:
+                        # Process and print results as they come in
+                        for command, (exit_code, stdout, stderr) in chunk_results.items():
+                            results[command] = (exit_code, stdout, stderr)
+                            if exit_code == 0:
+                                success_count += 1
+                    except Exception as exc:
+                        self.logger.error(f"A worker thread generated an exception: {exc}")
+
+            # Print results in original order
+            for command in commands:
+                exit_code, stdout, stderr = results.get(command, (-1, "", "Command not executed or result missing"))
+                print("-" * 40)
+                print(f"COMMAND: {command}")
+                if stdout:
+                    print(f"STDOUT:\n{stdout}")
+                if stderr:
+                    print(f"STDERR:\n{stderr}")
+                
+                if exit_code != 0:
+                    self.logger.error(f"Command failed (exit code {exit_code}): {command}")
+                print("-" * 40)
+
+        else: # Sequential execution
+            for i, command in enumerate(commands, 1):
+                self.logger.info(f"Executing command {i}/{total_commands}")
+                exit_code, stdout, stderr = self.execute_command(command)
+                
+                if stdout:
+                    print(f"STDOUT:\n{stdout}")
+                if stderr:
+                    print(f"STDERR:\n{stderr}")
+                
+                if exit_code == 0:
+                    success_count += 1
+                else:
+                    self.logger.error(f"Command failed: {command}")
+                
+                # Small delay between commands
+                time.sleep(0.5)
             
-            if exit_code == 0:
-                success_count += 1
-            else:
-                self.logger.error(f"Command failed: {command}")
-            
-            # Small delay between commands
-            time.sleep(0.5)
-        
         self.logger.info(f"Execution complete: {success_count}/{total_commands} commands successful")
         return success_count == total_commands
     
@@ -205,23 +250,16 @@ class SSHCommandExecutor:
             self.client.close()
             self.logger.info("SSH connection closed")
 
+def _execute_command_chunk_worker(hostname: str, username: str, password: Optional[str], 
+                                  key_filename: Optional[str], port: int, 
+                                  command_chunk: List[str], worker_id: int) -> dict[str, tuple[int, str, str]]:
+    """
+    A worker function to execute a chunk of commands over a single, persistent SSH session.
+    This is designed to be called by the ThreadPoolExecutor.
+    """
+    worker_logger = logging.getLogger(f"worker-{worker_id}")
+    results = {}
 
-def main():
-    """Main function to run the SSH command executor."""
-    if len(sys.argv) < 4:
-        print("Usage: python ssh_executor.py <hostname> <username> <commands_file> [password] [key_file] [port]")
-        print("Example: python ssh_executor.py 192.168.1.100 user commands.txt mypassword")
-        print("Example: python ssh_executor.py 192.168.1.100 user commands.txt '' ~/.ssh/id_rsa")
-        sys.exit(1)
-    
-    hostname = sys.argv[1]
-    username = sys.argv[2]
-    commands_file = sys.argv[3]
-    password = sys.argv[4] if len(sys.argv) > 4 and sys.argv[4] else None
-    key_filename = sys.argv[5] if len(sys.argv) > 5 and sys.argv[5] else None
-    port = int(sys.argv[6]) if len(sys.argv) > 6 else 22
-    
-    # Create SSH executor instance
     executor = SSHCommandExecutor(
         hostname=hostname,
         username=username,
@@ -229,28 +267,70 @@ def main():
         key_filename=key_filename,
         port=port
     )
+    executor.logger.setLevel(logging.WARNING)
+
+    worker_logger.info(f"Starting to process {len(command_chunk)} commands.")
+    if executor.connect():
+        try:
+            for command in command_chunk:
+                results[command] = executor.execute_command(command)
+        finally:
+            executor.disconnect()
+    else:
+        worker_logger.error(f"Could not connect to {hostname}. Skipping {len(command_chunk)} commands.")
+        for command in command_chunk:
+            results[command] = (-1, "", f"Worker failed to connect to {hostname}")
+    
+    worker_logger.info("Finished processing command chunk.")
+    return results
+
+def main():
+    """Main function to run the SSH command executor."""
+    parser = argparse.ArgumentParser(description="SSH Command Executor")
+    parser.add_argument("hostname", help="Remote server hostname or IP")
+    parser.add_argument("username", help="SSH username")
+    parser.add_argument("commands_file", help="Path to the file with commands to execute")
+    parser.add_argument("-p", "--password", help="SSH password (will prompt if not provided and key is not used)")
+    parser.add_argument("-k", "--key_file", help="Path to private key file")
+    parser.add_argument("--port", type=int, default=22, help="SSH port (default: 22)")
+    parser.add_argument("--parallel", action="store_true", help="Execute commands in parallel")
+    parser.add_argument("--workers", type=int, help="Number of parallel workers (default: None)")
+
+    args = parser.parse_args()
     
     try:
-        # Connect to the remote server
-        if not executor.connect():
-            print("Failed to establish SSH connection")
-            sys.exit(1)
-        
-        # Execute commands from file
-        success = executor.execute_commands_from_file(commands_file)
-        
-        if success:
-            print("All commands executed successfully")
-        else:
-            print("Some commands failed to execute")
-            sys.exit(1)
-    
+        run_execution(args)
     except KeyboardInterrupt:
         print("\nOperation interrupted by user")
         sys.exit(1)
     except Exception as e:
         print(f"Unexpected error: {e}")
         sys.exit(1)
+
+def run_execution(args: argparse.Namespace):
+    """Handles the setup and execution of commands."""
+    executor = SSHCommandExecutor(
+        hostname=args.hostname,
+        username=args.username,
+        password=args.password,
+        key_filename=args.key_file,
+        port=args.port
+    )
+
+    try:
+        # For sequential execution, we establish one persistent connection.
+        # For parallel, workers manage their own connections.
+        if not args.parallel and not executor.connect():
+            sys.exit(1)
+
+        success = executor.execute_commands_from_file(
+            args.commands_file,
+            parallel=args.parallel,
+            max_workers=args.workers
+        )
+
+        if not success:
+            sys.exit(1)
     finally:
         executor.disconnect()
 
